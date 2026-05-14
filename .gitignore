@@ -1,0 +1,36 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+.python-version
+
+# Data and large files
+data/
+*.gpkg
+*.tif
+*.geojson
+*.csv
+*.xlsx
+
+# Generated outputs
+*.html
+!README.md # Just in case
+
+# IDE and OS files
+.DS_Store
+.vscode/
+.idea/
+.ipynb_checkpoints/
+
+# Environment variables
+.env
+.env.local
