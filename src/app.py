@@ -26,6 +26,7 @@ processed_dir = Path(f"./data/{province_name}/{city_name}/processed")
 statcan_path = processed_dir / f"{city_name.lower()}_statcan_buildings_3d.geojson"
 overture_path = processed_dir / f"{city_name.lower()}_overture_buildings_3d.geojson"
 lidar_path = processed_dir / f"{city_name.lower()}_lidar_buildings_3d.geojson"
+rooftops_path = processed_dir / f"{city_name.lower()}_lidar_rooftops_3d.geojson"
 
 @st.cache_data
 def load_data(path):
@@ -39,6 +40,12 @@ def load_data(path):
         g = max(0, 255 - int(height * 4))
         b = max(0, 255 - int(height * 6))
         return [r, g, b, 200]
+        
+    # Ensure height columns exist
+    if 'height_p90' not in gdf.columns:
+        gdf['height_p90'] = 10.0 # Fallback
+    if 'height_max' not in gdf.columns:
+        gdf['height_max'] = 10.0
         
     gdf['color'] = gdf['height_p90'].apply(calculate_color)
     gdf['height_p90'] = gdf['height_p90'].round(1)
@@ -87,7 +94,8 @@ if view_mode == "Dataset Comparison (StatCan vs Overture)":
     source_map = {
         "Overture (Modern)": overture_path,
         "LiDAR (Auto-Extracted)": lidar_path,
-        "StatCan (Legacy)": statcan_path
+        "StatCan (Legacy)": statcan_path,
+        "LiDAR (Rooftop Segmentation)": rooftops_path
     }
     
     ds1 = st.sidebar.selectbox("Dataset 1 (Red):", ["Overture (Modern)", "LiDAR (Auto-Extracted)", "StatCan (Legacy)"])
@@ -145,7 +153,8 @@ elif view_mode == "Interactive 3D Map (PyDeck)":
     source_map = {
         "Overture (Modern)": overture_path,
         "LiDAR (Auto-Extracted)": lidar_path,
-        "StatCan (Legacy)": statcan_path
+        "StatCan (Legacy)": statcan_path,
+        "LiDAR (Rooftop Segmentation)": rooftops_path
     }
     active_path = source_map[dataset_choice]
     
@@ -263,7 +272,8 @@ else:
             source_map = {
                 "Overture (Modern)": overture_path,
                 "LiDAR (Auto-Extracted)": lidar_path,
-                "StatCan (Legacy)": statcan_path
+                "StatCan (Legacy)": statcan_path,
+                "LiDAR (Rooftop Segmentation)": rooftops_path
             }
             active_path = source_map[dataset_choice]
             
