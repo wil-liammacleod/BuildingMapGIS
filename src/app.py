@@ -28,11 +28,50 @@ overture_path = processed_dir / f"{city_name.lower()}_overture_buildings_3d.geoj
 lidar_path = processed_dir / f"{city_name.lower()}_lidar_buildings_3d.geojson"
 rooftops_path = processed_dir / f"{city_name.lower()}_lidar_rooftops_3d.geojson"
 
+def _get_file_size_mb(path) -> float:
+    return path.stat().st_size / (1024 * 1024)
+
+def load_data_with_status(path):
+    """Wrapper around load_data() that shows a size warning before loading.
+    st.toast() cannot be called inside @st.cache_data, so we do it here."""
+    if path.exists():
+        size_mb = _get_file_size_mb(path)
+        if size_mb > 10:
+            st.toast(f"⏳ Loading large dataset ({size_mb:.0f} MB) — simplifying geometries...", icon="🗺️")
+    return load_data(path)
+
 @st.cache_data
 def load_data(path):
     if not path.exists():
         return None
+    
+    # For very large files (e.g. rooftop segmentation), simplify to stay
+    # under Streamlit's 200MB message size limit.
+    file_size_mb = _get_file_size_mb(path)
+    needs_simplification = file_size_mb > 10
+    # NOTE: No st.* calls allowed inside @st.cache_data — notify the caller instead.
+    
     gdf = gpd.read_file(path)
+    
+    if needs_simplification:
+        # Simplify in a projected CRS (meters) for a meaningful tolerance,
+        # then convert back. 0.5m tolerance is invisible at city scale.
+        original_crs = gdf.crs
+        gdf = gdf.to_crs("EPSG:2958")
+        
+        # Drop tiny fragments (< 10 m²) that clutter the view
+        gdf = gdf[gdf.geometry.area >= 10.0].copy()
+        
+        # Simplify geometry vertices (0.5m tolerance)
+        gdf.geometry = gdf.geometry.simplify(tolerance=0.5, preserve_topology=True)
+        gdf = gdf.to_crs(original_crs)
+        
+        # Drop columns not needed for visualization to reduce payload
+        keep_cols = {'geometry', 'height_p90', 'height_max', 'address', 'type',
+                     'AVE_HGT', 'SLOPE', 'ASPECT', 'AREA', 'VALUE'}
+        drop_cols = [c for c in gdf.columns if c not in keep_cols]
+        if drop_cols:
+            gdf = gdf.drop(columns=drop_cols)
     
     # Generate safe colors based on height
     def calculate_color(height):
@@ -98,11 +137,12 @@ if view_mode == "Dataset Comparison (StatCan vs Overture)":
         "LiDAR (Rooftop Segmentation)": rooftops_path
     }
     
-    ds1 = st.sidebar.selectbox("Dataset 1 (Red):", ["Overture (Modern)", "LiDAR (Auto-Extracted)", "StatCan (Legacy)"])
-    ds2 = st.sidebar.selectbox("Dataset 2 (Blue):", ["LiDAR (Auto-Extracted)", "Overture (Modern)", "StatCan (Legacy)"])
+    all_sources = ["Overture (Modern)", "LiDAR (Auto-Extracted)", "LiDAR (Rooftop Segmentation)", "StatCan (Legacy)"]
+    ds1 = st.sidebar.selectbox("Dataset 1 (Red):", all_sources, index=0)
+    ds2 = st.sidebar.selectbox("Dataset 2 (Blue):", all_sources, index=2)
     
-    gdf_statcan = load_data(source_map[ds1])
-    gdf_overture = load_data(source_map[ds2])
+    gdf_statcan = load_data_with_status(source_map[ds1])
+    gdf_overture = load_data_with_status(source_map[ds2])
     
     layers = []
     
@@ -148,7 +188,7 @@ elif view_mode == "Interactive 3D Map (PyDeck)":
     st.sidebar.markdown("---")
     st.sidebar.header("Map Layers")
     
-    dataset_choice = st.sidebar.selectbox("Footprint Source:", ["Overture (Modern)", "LiDAR (Auto-Extracted)", "StatCan (Legacy)"])
+    dataset_choice = st.sidebar.selectbox("Footprint Source:", ["Overture (Modern)", "LiDAR (Auto-Extracted)", "LiDAR (Rooftop Segmentation)", "StatCan (Legacy)"])
     
     source_map = {
         "Overture (Modern)": overture_path,
@@ -163,7 +203,7 @@ elif view_mode == "Interactive 3D Map (PyDeck)":
     show_ndsm = st.sidebar.checkbox("Show nDSM (Height Raster)", value=False)
     show_roughness = st.sidebar.checkbox("Show Roughness (Trees Raster)", value=False)
 
-    gdf = load_data(active_path)
+    gdf = load_data_with_status(active_path)
     layers = []
 
     if show_ndsm:
@@ -237,8 +277,13 @@ elif view_mode == "Interactive 3D Map (PyDeck)":
     else:
         view_state = pdk.ViewState(longitude=-79.918, latitude=43.261, zoom=14.5)
 
+    # Build tooltip — include slope/aspect if available (rooftop segments)
+    tooltip_html = "<b>📍 {address}</b><br/>Type: {type}<br/><hr/>📏 <b>Height:</b> {height_p90} m<br/>📐 <b>Max Peak:</b> {height_max} m"
+    if gdf is not None and 'SLOPE' in gdf.columns:
+        tooltip_html += "<br/>⛰️ <b>Slope:</b> {SLOPE}°<br/>🧭 <b>Aspect:</b> {ASPECT}°"
+    
     tooltip = {
-        "html": "<b>📍 {address}</b><br/>Type: {type}<br/><hr/>📏 <b>Height:</b> {height_p90} m<br/>📐 <b>Max Peak:</b> {height_max} m",
+        "html": tooltip_html,
         "style": {
             "backgroundColor": "#222222",
             "color": "white",
@@ -268,7 +313,7 @@ else:
     
     with st.spinner(f"Loading {data_choice} for Analytics..."):
         if data_choice == "Building Footprints (2D)":
-            dataset_choice = st.sidebar.selectbox("Footprint Source:", ["Overture (Modern)", "LiDAR (Auto-Extracted)", "StatCan (Legacy)"])
+            dataset_choice = st.sidebar.selectbox("Footprint Source:", ["Overture (Modern)", "LiDAR (Auto-Extracted)", "LiDAR (Rooftop Segmentation)", "StatCan (Legacy)"])
             source_map = {
                 "Overture (Modern)": overture_path,
                 "LiDAR (Auto-Extracted)": lidar_path,
@@ -277,7 +322,7 @@ else:
             }
             active_path = source_map[dataset_choice]
             
-            gdf = load_data(active_path)
+            gdf = load_data_with_status(active_path)
             if gdf is not None:
                 fig = px.choropleth_map(
                     gdf,
