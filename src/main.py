@@ -3,6 +3,8 @@ import geopandas as gpd
 import pandas as pd
 from pathlib import Path
 import sys
+import shapely
+from shapely.ops import unary_union
 
 # Import our custom modules (now in the same directory)
 import importer
@@ -34,6 +36,73 @@ def detect_utm_epsg(bbox_latlon: list) -> str:
     epsg_code = nad83csrs_base.get(utm_zone, 2958)  # Fallback to 2958
     print(f"📐 Auto-detected UTM Zone {utm_zone}N → EPSG:{epsg_code}")
     return f"EPSG:{epsg_code}"
+
+
+def fix_geometry(geom):
+    """Try to fix invalid geometries or self-intersections."""
+    if not geom.is_valid:
+        return geom.buffer(0)
+    return geom
+
+
+def clean_rooftops(input_path: Path, output_path: Path, utm_crs: str):
+    """
+    Groups raw rooftop segments by building, simplifies their geometry, 
+    and trims overlaps to create a clean, non-overlapping 3D block model.
+    """
+    print(f"🧹 Cleaning and simplifying rooftops...")
+    gdf = gpd.read_file(input_path)
+    
+    # Ensure we are in a metric CRS for meaningful simplification
+    original_crs = gdf.crs
+    if gdf.crs.is_geographic:
+        gdf = gdf.to_crs(utm_crs)
+        
+    cleaned_features = []
+    
+    # Process building by building
+    building_ids = gdf['BUILDING'].unique()
+    for b_id in building_ids:
+        bldg = gdf[gdf['BUILDING'] == b_id].copy()
+        
+        # 1. Preliminary cleanup and simplification (1.0m tolerance)
+        bldg.geometry = bldg.geometry.apply(fix_geometry)
+        bldg.geometry = bldg.geometry.simplify(1.0, preserve_topology=True)
+        bldg.geometry = bldg.geometry.apply(fix_geometry)
+        
+        # 2. Sort by height DESC (highest segments first)
+        bldg = bldg.sort_values(by='height_p90', ascending=False)
+        
+        processed_footprints = None
+        
+        for idx, row in bldg.iterrows():
+            geom = row.geometry
+            if processed_footprints is None:
+                actual_geom = geom
+                processed_footprints = geom
+            else:
+                try:
+                    # Subtract higher segments from lower ones to avoid volume double-counting
+                    # Small buffer prevents topology slivers
+                    actual_geom = geom.difference(processed_footprints.buffer(0.01))
+                    processed_footprints = unary_union([processed_footprints, geom]).buffer(0)
+                except Exception:
+                    actual_geom = geom # Fallback
+            
+            if not actual_geom.is_empty:
+                actual_geom = fix_geometry(actual_geom)
+                new_row = row.copy()
+                new_row.geometry = actual_geom
+                cleaned_features.append(new_row)
+                
+    if cleaned_features:
+        clean_gdf = gpd.GeoDataFrame(cleaned_features, crs=gdf.crs)
+        # Convert back to original CRS (usually 4326) for visualization
+        clean_gdf = clean_gdf.to_crs(original_crs)
+        clean_gdf.to_file(output_path, driver="GeoJSON")
+        print(f"✅ Cleaned block model saved to: {output_path.name}")
+    else:
+        print("⚠️  No features survived cleaning.")
 
 
 def main():
@@ -425,6 +494,10 @@ def main():
                         rooftops_output = city_processed_dir / f"{city_name.lower()}_lidar_rooftops_3d.geojson"
                         rooftops_gdf.to_file(rooftops_output, driver="GeoJSON")
                         print(f"✅ High-detail rooftops saved to: {rooftops_output.name}")
+                        
+                        # Phase 3b: Cleaned Block Model
+                        clean_output = city_processed_dir / f"{city_name.lower()}_lidar_rooftops_clean_3d.geojson"
+                        clean_rooftops(rooftops_output, clean_output, lidar_crs)
                         
                         # Cleanup temp files
                         for p in city_processed_dir.glob("temp_footprints.*"):

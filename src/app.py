@@ -27,6 +27,7 @@ statcan_path = processed_dir / f"{city_name.lower()}_statcan_buildings_3d.geojso
 overture_path = processed_dir / f"{city_name.lower()}_overture_buildings_3d.geojson"
 lidar_path = processed_dir / f"{city_name.lower()}_lidar_buildings_3d.geojson"
 rooftops_path = processed_dir / f"{city_name.lower()}_lidar_rooftops_3d.geojson"
+rooftops_clean_path = processed_dir / f"{city_name.lower()}_lidar_rooftops_clean_3d.geojson"
 
 def _get_file_size_mb(path) -> float:
     return path.stat().st_size / (1024 * 1024)
@@ -134,10 +135,11 @@ if view_mode == "Dataset Comparison (StatCan vs Overture)":
         "Overture (Modern)": overture_path,
         "LiDAR (Auto-Extracted)": lidar_path,
         "StatCan (Legacy)": statcan_path,
-        "LiDAR (Rooftop Segmentation)": rooftops_path
+        "LiDAR (Rooftop Raw)": rooftops_path,
+        "LiDAR (Cleaned Blocks)": rooftops_clean_path
     }
     
-    all_sources = ["Overture (Modern)", "LiDAR (Auto-Extracted)", "LiDAR (Rooftop Segmentation)", "StatCan (Legacy)"]
+    all_sources = ["Overture (Modern)", "LiDAR (Auto-Extracted)", "LiDAR (Rooftop Raw)", "LiDAR (Cleaned Blocks)", "StatCan (Legacy)"]
     ds1 = st.sidebar.selectbox("Dataset 1 (Red):", all_sources, index=0)
     ds2 = st.sidebar.selectbox("Dataset 2 (Blue):", all_sources, index=2)
     
@@ -188,13 +190,14 @@ elif view_mode == "Interactive 3D Map (PyDeck)":
     st.sidebar.markdown("---")
     st.sidebar.header("Map Layers")
     
-    dataset_choice = st.sidebar.selectbox("Footprint Source:", ["Overture (Modern)", "LiDAR (Auto-Extracted)", "LiDAR (Rooftop Segmentation)", "StatCan (Legacy)"])
+    dataset_choice = st.sidebar.selectbox("Footprint Source:", ["Overture (Modern)", "LiDAR (Auto-Extracted)", "LiDAR (Rooftop Raw)", "LiDAR (Cleaned Blocks)", "StatCan (Legacy)"])
     
     source_map = {
         "Overture (Modern)": overture_path,
         "LiDAR (Auto-Extracted)": lidar_path,
         "StatCan (Legacy)": statcan_path,
-        "LiDAR (Rooftop Segmentation)": rooftops_path
+        "LiDAR (Rooftop Raw)": rooftops_path,
+        "LiDAR (Cleaned Blocks)": rooftops_clean_path
     }
     active_path = source_map[dataset_choice]
     
@@ -313,12 +316,13 @@ else:
     
     with st.spinner(f"Loading {data_choice} for Analytics..."):
         if data_choice == "Building Footprints (2D)":
-            dataset_choice = st.sidebar.selectbox("Footprint Source:", ["Overture (Modern)", "LiDAR (Auto-Extracted)", "LiDAR (Rooftop Segmentation)", "StatCan (Legacy)"])
+            dataset_choice = st.sidebar.selectbox("Footprint Source:", ["Overture (Modern)", "LiDAR (Auto-Extracted)", "LiDAR (Rooftop Raw)", "LiDAR (Cleaned Blocks)", "StatCan (Legacy)"])
             source_map = {
                 "Overture (Modern)": overture_path,
                 "LiDAR (Auto-Extracted)": lidar_path,
                 "StatCan (Legacy)": statcan_path,
-                "LiDAR (Rooftop Segmentation)": rooftops_path
+                "LiDAR (Rooftop Raw)": rooftops_path,
+                "LiDAR (Cleaned Blocks)": rooftops_clean_path
             }
             active_path = source_map[dataset_choice]
             
