@@ -6,38 +6,48 @@ import json
 
 def create_comparison_viz(building_id):
     raw_path = "/Users/liammacleod/Nextcloud/MASC/BuildingMapGIS/data/Ontario/McMaster/processed/mcmaster_lidar_rooftops_3d.geojson"
-    method_a_path = f"artifacts/building_{building_id}_method_a.geojson"
-    method_b_path = f"artifacts/building_{building_id}_method_b.geojson"
-    method_c_path = f"artifacts/building_{building_id}_method_c.json"
     
-    # Load Method C results
-    method_c_stats = {}
-    if os.path.exists(method_c_path):
-        with open(method_c_path, 'r') as f:
-            method_c_stats = json.load(f)
+    round_scenarios = {
+        'Raw Input': {
+            'file': raw_path, 
+            'color': [255, 0, 0, 100], 
+            'offset_idx': -2, 
+            'label': 'Raw Input (Overlapping, Unhealed)'
+        },
+        'Method D (No Rounding)': {
+            'file': f"artifacts/building_{building_id}_method_d_res_0.25_round_none.geojson", 
+            'color': [255, 150, 0, 200], 
+            'offset_idx': -0.5, 
+            'label': 'Method D (No Rounding)'
+        },
+        'Method D (1m Rounding)': {
+            'file': f"artifacts/building_{building_id}_method_d_res_0.25_round_1.0m.geojson", 
+            'color': [255, 215, 0, 200], 
+            'offset_idx': 0.5, 
+            'label': 'Method D (1m Rounding - HVAC Merged)'
+        },
+        'Method D (2m Rounding)': {
+            'file': f"artifacts/building_{building_id}_method_d_res_0.25_round_2.0m.geojson", 
+            'color': [255, 99, 71, 200], 
+            'offset_idx': 1.5, 
+            'label': 'Method D (2m Rounding - Coarse Profile)'
+        },
+        'Method D (3m Rounding)': {
+            'file': f"artifacts/building_{building_id}_method_d_res_0.25_round_3.0m.geojson", 
+            'color': [218, 112, 214, 200], 
+            'offset_idx': 2.5, 
+            'label': 'Method D (3m Rounding - Major Levels)'
+        }
+    }
     
-    # Load data
-    gdf_raw = gpd.read_file(raw_path)
-    gdf_raw = gdf_raw[gdf_raw['BUILDING'] == building_id].to_crs("EPSG:4326")
+    # Load raw data to find center
+    gdf_raw_full = gpd.read_file(raw_path)
+    gdf_raw = gdf_raw_full[gdf_raw_full['BUILDING'] == building_id].to_crs("EPSG:4326")
     
-    # Calculate Raw totals
-    # We need to re-project to 2958 for accurate area sum
-    raw_2958 = gdf_raw.to_crs("EPSG:2958")
-    raw_total_area = raw_2958['AREA'].sum()
-    
-    # Load method results
-    methods = {}
-    if os.path.exists(method_a_path):
-        methods['Method A (TopoJSON)'] = gpd.read_file(method_a_path).to_crs("EPSG:4326")
-    if os.path.exists(method_b_path):
-        methods['Method B (Trimesh)'] = gpd.read_file(method_b_path).to_crs("EPSG:4326")
-    
-    # Method C GeoJSON
-    method_c_geojson = f"artifacts/building_{building_id}_method_c.geojson"
-    if os.path.exists(method_c_geojson):
-        methods['Method C (Voxel)'] = gpd.read_file(method_c_geojson).to_crs("EPSG:4326")
-
-    # View State
+    if gdf_raw.empty:
+        print(f"Building {building_id} not found in raw data.")
+        return
+        
     center_lat = gdf_raw.geometry.centroid.y.mean()
     center_lon = gdf_raw.geometry.centroid.x.mean()
     
@@ -50,85 +60,71 @@ def create_comparison_viz(building_id):
     )
 
     layers = []
-    spacing = 0.0008
+    spacing = 0.0008  # spacing factor for side-by-side shift
     
-    # 1. Raw Layer (Red)
-    raw_offset = gdf_raw.copy()
-    raw_offset['method_label'] = 'Raw Input (Overlapping)'
-    raw_offset['bldg_total_area'] = f"{raw_total_area:,.2f}"
-    raw_offset['bldg_total_vol'] = "N/A"
-    raw_offset['method_c_ref'] = f"{method_c_stats.get('total_surface_area', 'N/A')} m²"
-    raw_offset.geometry = raw_offset.geometry.translate(xoff=-spacing * 1.5)
-    layers.append(pdk.Layer(
-        "GeoJsonLayer",
-        raw_offset,
-        opacity=0.4,
-        extruded=True,
-        get_elevation="height_p90",
-        get_fill_color=[255, 0, 0, 100],
-        get_line_color=[255, 255, 255],
-        pickable=True,
-    ))
-
-    # 2. Method A Layer (Green)
-    if 'Method A (TopoJSON)' in methods:
-        a_gdf = methods['Method A (TopoJSON)'].copy()
-        a_gdf['method_label'] = 'Method A (TopoJSON)'
-        total_sa = a_gdf['clean_surface_area'].sum() if 'clean_surface_area' in a_gdf.columns else 0
-        total_vol = a_gdf['clean_volume'].sum()
-        a_gdf['bldg_total_area'] = f"{total_sa:,.2f}"
-        a_gdf['bldg_total_vol'] = f"{total_vol:,.2f}"
-        a_gdf['method_c_ref'] = f"{method_c_stats.get('total_surface_area', 'N/A')} m²"
-        a_gdf.geometry = a_gdf.geometry.translate(xoff=-spacing * 0.5)
+    # For each scenario, load the GeoJSON, apply the offset, and add to layers
+    for name, config in round_scenarios.items():
+        file_path = config['file']
+        if not os.path.exists(file_path):
+            print(f"Skipping {name}: file not found at {file_path}")
+            continue
+            
+        gdf = gpd.read_file(file_path)
+        
+        # Filter for building_id if it's the raw file
+        if name == 'Raw Input':
+            gdf = gdf[gdf['BUILDING'] == building_id].copy()
+            
+        if gdf.empty:
+            continue
+            
+        # Ensure CRS is 4326
+        gdf = gdf.to_crs("EPSG:4326")
+        
+        # Extract total stats from first row if available, else compute
+        total_sa = gdf['clean_surface_area'].iloc[0] if 'clean_surface_area' in gdf.columns else 0.0
+        total_vol = gdf['clean_volume_total'].iloc[0] if 'clean_volume_total' in gdf.columns else 0.0
+        total_sqft = gdf['total_internal_sqft'].iloc[0] if 'total_internal_sqft' in gdf.columns else 0.0
+        max_floors = gdf['max_floors'].iloc[0] if 'max_floors' in gdf.columns else 0
+        bldg_use = gdf['bldg_use'].iloc[0] if 'bldg_use' in gdf.columns else 'N/A'
+        
+        # Calculate vertices
+        total_verts = 0
+        for geom in gdf.geometry:
+            if geom is None or geom.is_empty:
+                continue
+            if geom.geom_type == 'Polygon':
+                total_verts += len(geom.exterior.coords)
+            elif geom.geom_type == 'MultiPolygon':
+                for p in geom.geoms:
+                    total_verts += len(p.exterior.coords)
+                    
+        # Apply properties to rows for tooltips
+        gdf['method_label'] = config['label']
+        gdf['bldg_total_sa'] = f"{total_sa:,.1f}" if total_sa > 0 else "N/A"
+        gdf['bldg_total_vol'] = f"{total_vol:,.1f}" if total_vol > 0 else "N/A"
+        gdf['bldg_total_sqft'] = f"{total_sqft:,.1f}" if total_sqft > 0 else "N/A"
+        gdf['bldg_max_floors'] = int(max_floors) if max_floors > 0 else "N/A"
+        gdf['bldg_use'] = bldg_use
+        gdf['bldg_shapes_count'] = len(gdf)
+        gdf['bldg_vertices_count'] = total_verts
+        
+        # Shift horizontally
+        gdf.geometry = gdf.geometry.translate(xoff=config['offset_idx'] * spacing)
+        
+        # Create pydeck layer
         layers.append(pdk.Layer(
             "GeoJsonLayer",
-            a_gdf,
-            opacity=0.8,
+            gdf,
+            opacity=0.4 if name == 'Raw Input' else 0.8,
             extruded=True,
             get_elevation="height_p90",
-            get_fill_color=[0, 200, 100, 200],
+            get_fill_color=config['color'],
             get_line_color=[255, 255, 255],
             pickable=True,
         ))
-
-    # 3. Method B Layer (Blue)
-    if 'Method B (Trimesh)' in methods:
-        b_offset = methods['Method B (Trimesh)'].copy()
-        b_offset['method_label'] = 'Method B (Trimesh)'
-        total_vol = b_offset['clean_volume'].sum()
-        b_offset['bldg_total_area'] = "See console for Mesh SA"
-        b_offset['bldg_total_vol'] = f"{total_vol:,.2f}"
-        b_offset['method_c_ref'] = f"{method_c_stats.get('total_surface_area', 'N/A')} m²"
-        b_offset.geometry = b_offset.geometry.translate(xoff=spacing * 0.5)
-        layers.append(pdk.Layer(
-            "GeoJsonLayer",
-            b_offset,
-            opacity=0.8,
-            extruded=True,
-            get_elevation="height_p90",
-            get_fill_color=[0, 100, 255, 200],
-            get_line_color=[255, 255, 255],
-            pickable=True,
-        ))
-
-    # 4. Method C Layer (Purple)
-    if 'Method C (Voxel)' in methods:
-        c_offset = methods['Method C (Voxel)'].copy()
-        c_offset['method_label'] = 'Method C (Voxelized)'
-        c_offset['bldg_total_area'] = f"{method_c_stats.get('total_surface_area', 'N/A'):,.2f}"
-        c_offset['bldg_total_vol'] = f"{method_c_stats.get('total_volume', 'N/A'):,.2f}"
-        c_offset['method_c_ref'] = "SELF"
-        c_offset.geometry = c_offset.geometry.translate(xoff=spacing * 1.5)
-        layers.append(pdk.Layer(
-            "GeoJsonLayer",
-            c_offset,
-            opacity=0.9,
-            extruded=True,
-            get_elevation="height_p90",
-            get_fill_color=[150, 0, 255, 200],
-            get_line_color=[200, 200, 200],
-            pickable=True,
-        ))
+        
+        print(f"Added layer: {name} (Shapes: {len(gdf)}, Vertices: {total_verts}, Internal: {total_sqft:,.1f} sqft, Floors: {max_floors})")
 
     # Create Deck
     r = pdk.Deck(
@@ -136,16 +132,20 @@ def create_comparison_viz(building_id):
         initial_view_state=view_state,
         tooltip={
             "html": """
-                <b>Method:</b> {method_label}<br/>
+                <b>Method/Config:</b> {method_label}<br/>
                 <hr/>
                 <b>Segment Height:</b> {height_p90}m<br/>
                 <b>Segment Area:</b> {clean_area}m²<br/>
+                <b>Segment Floors:</b> {num_floors}<br/>
+                <b>Segment Int Area:</b> {internal_area_sqft} sq ft<br/>
                 <hr/>
                 <b>BUILDING TOTALS:</b><br/>
-                <b>Total SA (this method):</b> {bldg_total_area} m²<br/>
-                <b>Total Vol (this method):</b> {bldg_total_vol} m³<br/>
-                <hr/>
-                <b>Method C (Voxel Reference) SA:</b> {method_c_ref}
+                <b>Estimated Use:</b> {bldg_use}<br/>
+                <b>Max Floors:</b> {bldg_max_floors}<br/>
+                <b>Total Floor Area:</b> {bldg_total_sqft} sq ft<br/>
+                <b>Sealed Surface Area:</b> {bldg_total_sa} m²<br/>
+                <b>Total Volume:</b> {bldg_total_vol} m³<br/>
+                <b>Shapes:</b> {bldg_shapes_count} | <b>Vertices:</b> {bldg_vertices_count}
             """,
             "style": {"color": "white", "backgroundColor": "#222", "fontSize": "12px"}
         },
@@ -155,7 +155,7 @@ def create_comparison_viz(building_id):
     output_html = "artifacts/all_methods_comparison.html"
     r.to_html(output_html)
     print(f"Comparison visualization saved to: {output_html}")
-    print("Red (Left) = Raw | Green (Center) = Method A | Blue (Right) = Method B")
+    print("Red (x-2) = Raw | Orange (x-0.5) = Method D (No Round) | Gold (x+0.5) = 1m Round | Coral (x+1.5) = 2m Round | Magenta (x+2.5) = 3m Round")
 
 if __name__ == "__main__":
     create_comparison_viz(building_id=132)

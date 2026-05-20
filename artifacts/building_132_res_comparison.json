@@ -1,0 +1,58 @@
+[
+    {
+        "resolution": 0.1,
+        "total_time_ms": 2335.4,
+        "data_loading_ms": 2176.9,
+        "footprint_heal_ms": 68.0,
+        "revectorization_ms": 20.0,
+        "topo_simplify_ms": 50.7,
+        "metrics_calc_ms": 8.0,
+        "export_ms": 11.8,
+        "volume_m3": 30692.1,
+        "surface_area_m2": 17677.84,
+        "num_segments": 14,
+        "num_vertices": 26
+    },
+    {
+        "resolution": 0.25,
+        "total_time_ms": 2286.4,
+        "data_loading_ms": 2198.5,
+        "footprint_heal_ms": 54.2,
+        "revectorization_ms": 6.3,
+        "topo_simplify_ms": 20.0,
+        "metrics_calc_ms": 4.8,
+        "export_ms": 2.6,
+        "volume_m3": 31330.49,
+        "surface_area_m2": 19290.28,
+        "num_segments": 14,
+        "num_vertices": 227
+    },
+    {
+        "resolution": 0.5,
+        "total_time_ms": 2252.2,
+        "data_loading_ms": 2172.3,
+        "footprint_heal_ms": 51.4,
+        "revectorization_ms": 3.9,
+        "topo_simplify_ms": 16.4,
+        "metrics_calc_ms": 5.4,
+        "export_ms": 2.9,
+        "volume_m3": 32454.59,
+        "surface_area_m2": 15817.2,
+        "num_segments": 14,
+        "num_vertices": 532
+    },
+    {
+        "resolution": 1.0,
+        "total_time_ms": 2285.0,
+        "data_loading_ms": 2208.6,
+        "footprint_heal_ms": 52.6,
+        "revectorization_ms": 3.8,
+        "topo_simplify_ms": 14.0,
+        "metrics_calc_ms": 3.6,
+        "export_ms": 2.4,
+        "volume_m3": 34360.82,
+        "surface_area_m2": 13025.41,
+        "num_segments": 14,
+        "num_vertices": 303
+    }
+]

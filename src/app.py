@@ -49,7 +49,7 @@ def load_data(path):
     # For very large files (e.g. rooftop segmentation), simplify to stay
     # under Streamlit's 200MB message size limit.
     file_size_mb = _get_file_size_mb(path)
-    needs_simplification = file_size_mb > 10
+    needs_simplification = file_size_mb > 10 and "clean" not in path.name
     # NOTE: No st.* calls allowed inside @st.cache_data — notify the caller instead.
     
     gdf = gpd.read_file(path)
@@ -136,10 +136,10 @@ if view_mode == "Dataset Comparison (StatCan vs Overture)":
         "LiDAR (Auto-Extracted)": lidar_path,
         "StatCan (Legacy)": statcan_path,
         "LiDAR (Rooftop Raw)": rooftops_path,
-        "LiDAR (Cleaned Blocks)": rooftops_clean_path
+        "LiDAR (Method D Healed)": rooftops_clean_path
     }
     
-    all_sources = ["Overture (Modern)", "LiDAR (Auto-Extracted)", "LiDAR (Rooftop Raw)", "LiDAR (Cleaned Blocks)", "StatCan (Legacy)"]
+    all_sources = ["Overture (Modern)", "LiDAR (Auto-Extracted)", "LiDAR (Rooftop Raw)", "LiDAR (Method D Healed)", "StatCan (Legacy)"]
     ds1 = st.sidebar.selectbox("Dataset 1 (Red):", all_sources, index=0)
     ds2 = st.sidebar.selectbox("Dataset 2 (Blue):", all_sources, index=2)
     
@@ -190,14 +190,14 @@ elif view_mode == "Interactive 3D Map (PyDeck)":
     st.sidebar.markdown("---")
     st.sidebar.header("Map Layers")
     
-    dataset_choice = st.sidebar.selectbox("Footprint Source:", ["Overture (Modern)", "LiDAR (Auto-Extracted)", "LiDAR (Rooftop Raw)", "LiDAR (Cleaned Blocks)", "StatCan (Legacy)"])
+    dataset_choice = st.sidebar.selectbox("Footprint Source:", ["Overture (Modern)", "LiDAR (Auto-Extracted)", "LiDAR (Rooftop Raw)", "LiDAR (Method D Healed)", "StatCan (Legacy)"])
     
     source_map = {
         "Overture (Modern)": overture_path,
         "LiDAR (Auto-Extracted)": lidar_path,
         "StatCan (Legacy)": statcan_path,
         "LiDAR (Rooftop Raw)": rooftops_path,
-        "LiDAR (Cleaned Blocks)": rooftops_clean_path
+        "LiDAR (Method D Healed)": rooftops_clean_path
     }
     active_path = source_map[dataset_choice]
     
@@ -316,13 +316,13 @@ else:
     
     with st.spinner(f"Loading {data_choice} for Analytics..."):
         if data_choice == "Building Footprints (2D)":
-            dataset_choice = st.sidebar.selectbox("Footprint Source:", ["Overture (Modern)", "LiDAR (Auto-Extracted)", "LiDAR (Rooftop Raw)", "LiDAR (Cleaned Blocks)", "StatCan (Legacy)"])
+            dataset_choice = st.sidebar.selectbox("Footprint Source:", ["Overture (Modern)", "LiDAR (Auto-Extracted)", "LiDAR (Rooftop Raw)", "LiDAR (Method D Healed)", "StatCan (Legacy)"])
             source_map = {
                 "Overture (Modern)": overture_path,
                 "LiDAR (Auto-Extracted)": lidar_path,
                 "StatCan (Legacy)": statcan_path,
                 "LiDAR (Rooftop Raw)": rooftops_path,
-                "LiDAR (Cleaned Blocks)": rooftops_clean_path
+                "LiDAR (Method D Healed)": rooftops_clean_path
             }
             active_path = source_map[dataset_choice]
             
@@ -410,3 +410,5 @@ else:
             
             st.plotly_chart(fig, use_container_width=True)
             st.info("💡 **Tip:** Hover your mouse over any pixel on the map to see the exact recorded value. You can also zoom in by clicking and dragging a box!")
+
+
