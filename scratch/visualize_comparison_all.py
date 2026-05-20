@@ -12,32 +12,94 @@ def create_comparison_viz(building_id):
             'file': raw_path, 
             'color': [255, 0, 0, 100], 
             'offset_idx': -2, 
+            'offset_idy': 0,
             'label': 'Raw Input (Overlapping, Unhealed)'
         },
-        'Method D (No Rounding)': {
+
+        'Method D (No Rounding - 0.25m)': {
             'file': f"artifacts/building_{building_id}_method_d_res_0.25_round_none.geojson", 
             'color': [255, 150, 0, 200], 
             'offset_idx': -0.5, 
+            'offset_idy': 0,
             'label': 'Method D (No Rounding)'
         },
-        'Method D (1m Rounding)': {
+        'Method D (1m Rounding - 0.25m)': {
             'file': f"artifacts/building_{building_id}_method_d_res_0.25_round_1.0m.geojson", 
             'color': [255, 215, 0, 200], 
             'offset_idx': 0.5, 
+            'offset_idy': 0,
             'label': 'Method D (1m Rounding - HVAC Merged)'
         },
-        'Method D (2m Rounding)': {
+        'Method D (2m Rounding - 0.25m)': {
             'file': f"artifacts/building_{building_id}_method_d_res_0.25_round_2.0m.geojson", 
             'color': [255, 99, 71, 200], 
             'offset_idx': 1.5, 
+            'offset_idy': 0,
             'label': 'Method D (2m Rounding - Coarse Profile)'
         },
-        'Method D (3m Rounding)': {
+        'Method D (3m Rounding - 0.25m)': {
             'file': f"artifacts/building_{building_id}_method_d_res_0.25_round_3.0m.geojson", 
             'color': [218, 112, 214, 200], 
             'offset_idx': 2.5, 
+            'offset_idy': 0,
             'label': 'Method D (3m Rounding - Major Levels)'
-        }
+        },
+        'Method D (No Rounding - 0.5m)': {
+            'file': f"artifacts/building_{building_id}_method_d_res_0.5_round_none.geojson", 
+            'color': [255, 150, 0, 200], 
+            'offset_idx': -0.5, 
+            'offset_idy': -1,
+            'label': 'Method D (No Rounding)'
+        },
+        'Method D (1m Rounding - 0.5m)': {
+            'file': f"artifacts/building_{building_id}_method_d_res_0.5_round_1.0m.geojson", 
+            'color': [255, 215, 0, 200], 
+            'offset_idx': 0.5,
+            'offset_idy': -1, 
+            'label': 'Method D (1m Rounding - HVAC Merged)'
+        },
+        'Method D (2m Rounding - 0.5m)': {
+            'file': f"artifacts/building_{building_id}_method_d_res_0.5_round_2.0m.geojson", 
+            'color': [255, 99, 71, 200], 
+            'offset_idx': 1.5,
+            'offset_idy': -1, 
+            'label': 'Method D (2m Rounding - Coarse Profile)'
+        },
+        'Method D (3m Rounding - 0.5m)': {
+            'file': f"artifacts/building_{building_id}_method_d_res_0.5_round_3.0m.geojson", 
+            'color': [218, 112, 214, 200], 
+            'offset_idx': 2.5,
+            'offset_idy': -1, 
+            'label': 'Method D (3m Rounding - Major Levels)'
+        },
+        'Method D (No Rounding - 1m)': {
+            'file': f"artifacts/building_{building_id}_method_d_res_1.0_round_none.geojson", 
+            'color': [255, 150, 0, 200], 
+            'offset_idx': -0.5,
+            'offset_idy': -2, 
+            'label': 'Method D (No Rounding)'
+        },
+        'Method D (1m Rounding - 1m)': {
+            'file': f"artifacts/building_{building_id}_method_d_res_1.0_round_1.0m.geojson", 
+            'color': [255, 215, 0, 200], 
+            'offset_idx': 0.5,
+            'offset_idy': -2, 
+            'label': 'Method D (1m Rounding - HVAC Merged)'
+        },
+        'Method D (2m Rounding - 1m)': {
+            'file': f"artifacts/building_{building_id}_method_d_res_1.0_round_2.0m.geojson", 
+            'color': [255, 99, 71, 200], 
+            'offset_idx': 1.5,
+            'offset_idy': -2, 
+            'label': 'Method D (2m Rounding - Coarse Profile)'
+        },
+        'Method D (3m Rounding - 1m)': {
+            'file': f"artifacts/building_{building_id}_method_d_res_1.0_round_3.0m.geojson", 
+            'color': [218, 112, 214, 200], 
+            'offset_idx': 2.5,
+            'offset_idy': -2, 
+            'label': 'Method D (3m Rounding - Major Levels)'
+        },
     }
     
     # Load raw data to find center
@@ -110,7 +172,7 @@ def create_comparison_viz(building_id):
         gdf['bldg_vertices_count'] = total_verts
         
         # Shift horizontally
-        gdf.geometry = gdf.geometry.translate(xoff=config['offset_idx'] * spacing)
+        gdf.geometry = gdf.geometry.translate(xoff=config['offset_idx'] * spacing, yoff=config['offset_idy'] * spacing)
         
         # Create pydeck layer
         layers.append(pdk.Layer(

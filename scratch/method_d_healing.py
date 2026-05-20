@@ -307,23 +307,33 @@ if __name__ == "__main__":
     
     # 4 Scenarios: resolution 0.25m, with different rounding steps: None, 1.0m, 2.0m, 3.0m
     rounding_steps = [None, 1.0, 2.0, 3.0]
+    resolutions = [0.25, 0.5, 1.0]
     comparison_results = []
     
-    for step in rounding_steps:
-        _, metrics = run_method_d(
-            rooftops_path, 
-            building_id=132, 
-            resolution=0.25, 
-            tolerance=0.3, 
-            max_hole_area=200.0,
-            residential_floor_height=3.0,
-            commercial_floor_height=4.0,
-            default_floor_height=3.5,
-            height_round_step=step
-        )
-        comparison_results.append(metrics)
-        
-    comp_output_path = "artifacts/building_132_round_comparison.json"
+    for resolution in resolutions:
+        for step in rounding_steps:
+            _, metrics = run_method_d(
+                rooftops_path, 
+                building_id=132, 
+                resolution=resolution, 
+                tolerance=0.3, 
+                max_hole_area=200.0,
+                residential_floor_height=3.0,
+                commercial_floor_height=4.0,
+                default_floor_height=3.5,
+                height_round_step=step
+            )
+            comparison_results.append(metrics)
+    
+    # Save comparison table
+    comp_output_path = "artifacts/building_132_resolution_rounding_comparison.json"
     with open(comp_output_path, 'w') as f:
         json.dump(comparison_results, f, indent=4)
-    print(f"\nSaved rounding comparison table to: {comp_output_path}")
+    print(f"\nSaved resolution & rounding comparison table to: {comp_output_path}")
+
+    # Print summary table
+    print("\n--- Resolution & Rounding Comparison ---")
+    print(f"{'Res':<6} {'Round':<10} {'Use':<10} {'Floors':<8} {'Int Sq Ft':<12} {'Area m²':<10} {'Volume m³':<12} {'Shapes':<8} {'Vertices':<8} {'Time ms':<10}")
+    print("-" * 90)
+    for m in comparison_results:
+        print(f"{m['resolution']:<6.2f} {m['round_label']:<10} {m['bldg_use']:<10} {m['max_floors']:<8} {m['total_internal_sqft']:<12.1f} {m['surface_area_m2']:<10.1f} {m['volume_m3']:<12.1f} {m['num_segments']:<8} {m['num_vertices']:<8} {m['total_time_ms']:<10.1f}")
