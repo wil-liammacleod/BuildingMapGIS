@@ -34,3 +34,10 @@ data/
 # Environment variables
 .env
 .env.local
+
+# LiDAR files
+*.laz
+*.las
+
+# Test outputs
+whiteboxtest/output/
