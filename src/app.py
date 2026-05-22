@@ -1,6 +1,7 @@
 import streamlit as st
 import pydeck as pdk
 import geopandas as gpd
+import pandas as pd
 import rasterio
 from rasterio.warp import transform_bounds
 import numpy as np
@@ -17,6 +18,7 @@ st.sidebar.header("Navigation")
 view_mode = st.sidebar.radio(
     "Select View Mode:",
     ["Scientific Analytics (Plotly)", "Interactive 3D Map (PyDeck)", "Dataset Comparison (StatCan vs Overture)"],
+    index=1,
     help="Switch between analyzing the raw LiDAR data pixel-by-pixel, and viewing the fully extruded 3D building models."
 )
 
@@ -46,21 +48,16 @@ def load_data(path):
     if not path.exists():
         return None
     
-    # For very large files (e.g. rooftop segmentation), simplify to stay
-    # under Streamlit's 200MB message size limit.
     file_size_mb = _get_file_size_mb(path)
     needs_simplification = file_size_mb > 10 and "clean" not in path.name
-    # NOTE: No st.* calls allowed inside @st.cache_data — notify the caller instead.
     
     gdf = gpd.read_file(path)
     
     if needs_simplification:
-        # Simplify in a projected CRS (meters) for a meaningful tolerance,
-        # then convert back. 0.5m tolerance is invisible at city scale.
         original_crs = gdf.crs
         gdf = gdf.to_crs("EPSG:2958")
         
-        # Drop tiny fragments (< 10 m²) that clutter the view
+        # Drop tiny fragments (< 10 m²)
         gdf = gdf[gdf.geometry.area >= 10.0].copy()
         
         # Simplify geometry vertices (0.5m tolerance)
@@ -69,7 +66,15 @@ def load_data(path):
         
         # Drop columns not needed for visualization to reduce payload
         keep_cols = {'geometry', 'height_p90', 'height_max', 'address', 'type',
-                     'AVE_HGT', 'SLOPE', 'ASPECT', 'AREA', 'VALUE'}
+                     'AVE_HGT', 'SLOPE', 'ASPECT', 'AREA', 'VALUE',
+                     # Method D metric columns
+                     'num_floors', 'internal_area_sqft', 'internal_area_m2',
+                     'clean_area', 'clean_volume', 'clean_volume_total',
+                     'clean_surface_area', 'total_internal_sqft',
+                     'max_floors', 'bldg_use', 'floor_height', 'BUILDING',
+                     # Quality & S3DB columns
+                     'lqs', 'q_coverage', 'q_canopy', 'tree_percentage',
+                     'is_fallback', 'osm_id', 'parent_id', 'height'}
         drop_cols = [c for c in gdf.columns if c not in keep_cols]
         if drop_cols:
             gdf = gdf.drop(columns=drop_cols)
@@ -81,13 +86,38 @@ def load_data(path):
         b = max(0, 255 - int(height * 6))
         return [r, g, b, 200]
         
+    def calculate_lqs_color(lqs):
+        if lqs is None or np.isnan(lqs):
+            return [150, 150, 150, 200] # Gray for missing
+        if lqs >= 0.85:
+            return [39, 174, 96, 200] # Green
+        elif lqs >= 0.70:
+            return [241, 196, 15, 200] # Yellow
+        else:
+            return [192, 57, 43, 200] # Red
+        
     # Ensure height columns exist
     if 'height_p90' not in gdf.columns:
-        gdf['height_p90'] = 10.0 # Fallback
+        if 'height' in gdf.columns:
+            gdf['height_p90'] = gdf['height']
+        else:
+            gdf['height_p90'] = 10.0
+            
     if 'height_max' not in gdf.columns:
-        gdf['height_max'] = 10.0
+        if 'height' in gdf.columns:
+            gdf['height_max'] = gdf['height']
+        else:
+            gdf['height_max'] = 10.0
+            
+    if 'lqs' not in gdf.columns:
+        gdf['lqs'] = np.nan
         
-    gdf['color'] = gdf['height_p90'].apply(calculate_color)
+    gdf['color_height'] = gdf['height_p90'].apply(calculate_color)
+    gdf['color_lqs'] = gdf['lqs'].apply(calculate_lqs_color)
+    
+    # Keep legacy color reference pointing to height color for compatibility
+    gdf['color'] = gdf['color_height']
+    
     gdf['height_p90'] = gdf['height_p90'].round(1)
     gdf['height_max'] = gdf['height_max'].round(1)
     
@@ -173,31 +203,49 @@ if view_mode == "Dataset Comparison (StatCan vs Overture)":
         ))
         
     view_state = pdk.ViewState(
-        longitude=gdf_statcan.geometry.centroid.x.mean() if gdf_statcan is not None else -79.918,
-        latitude=gdf_statcan.geometry.centroid.y.mean() if gdf_statcan is not None else 43.261,
+        longitude=gdf_statcan.to_crs("EPSG:2958").geometry.centroid.to_crs("EPSG:4326").x.mean() if gdf_statcan is not None else -79.918,
+        latitude=gdf_statcan.to_crs("EPSG:2958").geometry.centroid.to_crs("EPSG:4326").y.mean() if gdf_statcan is not None else 43.261,
         zoom=14.5, 
         pitch=0, 
         bearing=0
+    )
+    
+    map_height = st.sidebar.slider(
+        "Map Window Height (px)",
+        min_value=400,
+        max_value=1200,
+        value=750,
+        step=50,
+        help="Adjust the vertical height of the map window."
     )
     
     st.pydeck_chart(pdk.Deck(
         layers=layers,
         initial_view_state=view_state,
         map_style=pdk.map_styles.DARK
-    ), use_container_width=True)
+    ), use_container_width=True, height=map_height)
 
 elif view_mode == "Interactive 3D Map (PyDeck)":
     st.sidebar.markdown("---")
     st.sidebar.header("Map Layers")
     
-    dataset_choice = st.sidebar.selectbox("Footprint Source:", ["Overture (Modern)", "LiDAR (Auto-Extracted)", "LiDAR (Rooftop Raw)", "LiDAR (Method D Healed)", "StatCan (Legacy)"])
+    s3db_path = processed_dir / f"{city_name.lower()}_lidar_rooftops_s3db_3d.geojson"
+    blended_path = processed_dir / f"{city_name.lower()}_lidar_rooftops_blended_3d.geojson"
+    
+    dataset_choice = st.sidebar.selectbox(
+        "Footprint Source:",
+        ["Overture (Modern)", "LiDAR (Auto-Extracted)", "LiDAR (Rooftop Raw)", "LiDAR (Method D Healed)", "LiDAR (S3DB Parents & Parts)", "LiDAR (Blended OSM)", "StatCan (Legacy)"],
+        index=4
+    )
     
     source_map = {
         "Overture (Modern)": overture_path,
         "LiDAR (Auto-Extracted)": lidar_path,
         "StatCan (Legacy)": statcan_path,
         "LiDAR (Rooftop Raw)": rooftops_path,
-        "LiDAR (Method D Healed)": rooftops_clean_path
+        "LiDAR (Method D Healed)": rooftops_clean_path,
+        "LiDAR (S3DB Parents & Parts)": s3db_path,
+        "LiDAR (Blended OSM)": blended_path
     }
     active_path = source_map[dataset_choice]
     
@@ -205,9 +253,49 @@ elif view_mode == "Interactive 3D Map (PyDeck)":
     show_2d = st.sidebar.checkbox("Show 2D Footprints", value=False)
     show_ndsm = st.sidebar.checkbox("Show nDSM (Height Raster)", value=False)
     show_roughness = st.sidebar.checkbox("Show Roughness (Trees Raster)", value=False)
+    
+    color_theme = st.sidebar.selectbox("Color Theme:", ["Height Gradient", "LiDAR Quality Score (LQS)"])
+    color_col = "color_lqs" if color_theme == "LiDAR Quality Score (LQS)" else "color_height"
+
+    st.sidebar.markdown("---")
+    st.sidebar.header("Display Settings")
+    map_height = st.sidebar.slider(
+        "Map Window Height (px)",
+        min_value=400,
+        max_value=1200,
+        value=750,
+        step=50,
+        help="Adjust the vertical height of the map window."
+    )
+    
+    elevation_scale = 1.0
+    if show_3d:
+        elevation_scale = st.sidebar.slider(
+            "3D Elevation Scale",
+            min_value=0.5,
+            max_value=3.0,
+            value=1.0,
+            step=0.1,
+            help="Multiply building heights by this factor for vertical exaggeration."
+        )
 
     gdf = load_data_with_status(active_path)
     layers = []
+
+    # Calculate sidebar stats if LQS is in gdf
+    if gdf is not None and 'lqs' in gdf.columns:
+        valid_lqs = gdf['lqs'].dropna()
+        if not valid_lqs.empty:
+            avg_lqs = valid_lqs.mean()
+            st.sidebar.metric("Average LiDAR Quality", f"{avg_lqs * 100:.1f}%")
+            
+            if 'is_fallback' in gdf.columns:
+                # Group by building id to count buildings, not individual parts
+                bldg_fallback = gdf.groupby('BUILDING')['is_fallback'].first()
+                fallbacks = bldg_fallback.sum()
+                total_bldgs = len(bldg_fallback)
+                if total_bldgs > 0:
+                    st.sidebar.metric("Low Quality Fallbacks", f"{fallbacks} / {total_bldgs}", f"{fallbacks/total_bldgs*100:.1f}% of bldgs")
 
     if show_ndsm:
         bounds, img_path = get_raster_layer(f"{city_name.lower()}_ndsm_output.tif", "ndsm_v2.png", "plasma", vmin=0, vmax=30)
@@ -238,10 +326,34 @@ elif view_mode == "Interactive 3D Map (PyDeck)":
         ))
 
     if gdf is not None:
+        # Safely copy rename colons to underscores to prevent format specifier errors in tooltip rendering
+        if 'building:levels' in gdf.columns:
+            gdf['building_levels'] = gdf['building:levels']
+        else:
+            gdf['building_levels'] = gdf.get('levels', gdf.get('num_floors', 3))
+            
+        if 'building:part' in gdf.columns:
+            gdf['building_part'] = gdf['building:part']
+
+        # Separate parent footprints and building parts to prevent rendering double overlapping volumes
+        if 'type' in gdf.columns:
+            parents_gdf = gdf[gdf['type'] == 'building']
+            parts_gdf = gdf[gdf['type'] == 'building_part']
+            
+            layer_2d_gdf = parents_gdf
+            
+            # Extrude parts + any parent buildings that don't have parts (e.g. unmatched OSM buildings)
+            has_parts_parent_ids = set(parts_gdf['parent_id'].unique() if 'parent_id' in parts_gdf.columns else parts_gdf['BUILDING'].unique())
+            unmatched_parents = parents_gdf[~parents_gdf['BUILDING'].isin(has_parts_parent_ids) | (parents_gdf['BUILDING'] == -1)]
+            layer_3d_gdf = gpd.GeoDataFrame(pd.concat([parts_gdf, unmatched_parents], ignore_index=True), crs=gdf.crs)
+        else:
+            layer_2d_gdf = gdf
+            layer_3d_gdf = gdf
+
         if show_2d:
             layers.append(pdk.Layer(
                 "PolygonLayer",
-                gdf,
+                layer_2d_gdf,
                 get_polygon="geometry.coordinates",
                 pickable=True,
                 auto_highlight=True,
@@ -249,14 +361,14 @@ elif view_mode == "Interactive 3D Map (PyDeck)":
                 stroked=True,
                 filled=True,
                 extruded=False,
-                get_fill_color="color",
+                get_fill_color=color_col,
                 get_line_color=[255, 255, 255]
             ))
     
         if show_3d:
             layers.append(pdk.Layer(
                 "PolygonLayer",
-                gdf,
+                layer_3d_gdf,
                 get_polygon="geometry.coordinates",
                 pickable=True,
                 auto_highlight=True,
@@ -266,13 +378,15 @@ elif view_mode == "Interactive 3D Map (PyDeck)":
                 extruded=True,
                 wireframe=True,
                 get_elevation="height_p90",
-                get_fill_color="color",
+                elevation_scale=elevation_scale,
+                get_fill_color=color_col,
                 get_line_color=[255, 255, 255]
             ))
     
+        _gdf_proj = gdf.to_crs("EPSG:2958")
         view_state = pdk.ViewState(
-            longitude=gdf.geometry.centroid.x.mean(),
-            latitude=gdf.geometry.centroid.y.mean(),
+            longitude=_gdf_proj.geometry.centroid.to_crs("EPSG:4326").x.mean(),
+            latitude=_gdf_proj.geometry.centroid.to_crs("EPSG:4326").y.mean(),
             zoom=14.5, 
             pitch=45 if show_3d else 0, 
             bearing=0
@@ -280,11 +394,64 @@ elif view_mode == "Interactive 3D Map (PyDeck)":
     else:
         view_state = pdk.ViewState(longitude=-79.918, latitude=43.261, zoom=14.5)
 
-    # Build tooltip — include slope/aspect if available (rooftop segments)
-    tooltip_html = "<b>📍 {address}</b><br/>Type: {type}<br/><hr/>📏 <b>Height:</b> {height_p90} m<br/>📐 <b>Max Peak:</b> {height_max} m"
-    if gdf is not None and 'SLOPE' in gdf.columns:
-        tooltip_html += "<br/>⛰️ <b>Slope:</b> {SLOPE}°<br/>🧭 <b>Aspect:</b> {ASPECT}°"
-    
+    # Build tooltip — rich metadata for Method D healed, basic for all other sources
+    if gdf is not None and 'lqs' in gdf.columns and not gdf['lqs'].isna().all():
+        tooltip_html = """
+            <b>📍 {address}</b><br/>
+            <hr/>
+            <b>Feature Type:</b> {type}<br/>
+            <b>Height:</b> {height_p90} m<br/>
+            <b>Floors:</b> {building_levels}<br/>
+            <b>LiDAR Quality Score (LQS):</b> {lqs}<br/>
+            <b>- Footprint Coverage:</b> {q_coverage}<br/>
+            <b>- Tree Canopy Overlap:</b> {q_canopy} ({tree_percentage}% cover)<br/>
+            <b>Fallback Applied:</b> {is_fallback}<br/>
+        """
+        if 'clean_area' in gdf.columns:
+            tooltip_html += """
+                <hr/>
+                <b>Segment Area:</b> {clean_area} m²<br/>
+                <b>Segment Floors:</b> {num_floors}<br/>
+                <b>Segment Int. Area:</b> {internal_area_sqft} sq ft<br/>
+            """
+        if 'total_internal_sqft' in gdf.columns:
+            tooltip_html += """
+                <hr/>
+                <b>BUILDING TOTALS:</b><br/>
+                <b>Estimated Use:</b> {bldg_use}<br/>
+                <b>Max Floors:</b> {max_floors}<br/>
+                <b>Total Floor Area:</b> {total_internal_sqft} sq ft<br/>
+                <b>Sealed Surface Area:</b> {clean_surface_area} m²<br/>
+                <b>Total Volume:</b> {clean_volume_total} m³
+            """
+        if 'osm_id' in gdf.columns:
+            tooltip_html += """
+                <hr/>
+                <b>OSM Building ID:</b> {osm_id}<br/>
+                <b>OSM Name:</b> {name}
+            """
+    elif gdf is not None and 'num_floors' in gdf.columns:
+        # Rich Method D tooltip matching visualize_comparison_all.py
+        tooltip_html = """
+            <b>📍 {address}</b><br/>
+            <hr/>
+            <b>Segment Height:</b> {height_p90} m<br/>
+            <b>Segment Area:</b> {clean_area} m²<br/>
+            <b>Segment Floors:</b> {num_floors}<br/>
+            <b>Segment Int. Area:</b> {internal_area_sqft} sq ft<br/>
+            <hr/>
+            <b>BUILDING TOTALS:</b><br/>
+            <b>Estimated Use:</b> {bldg_use}<br/>
+            <b>Max Floors:</b> {max_floors}<br/>
+            <b>Total Floor Area:</b> {total_internal_sqft} sq ft<br/>
+            <b>Sealed Surface Area:</b> {clean_surface_area} m²<br/>
+            <b>Total Volume:</b> {clean_volume_total} m³
+        """
+    else:
+        tooltip_html = "<b>📍 {address}</b><br/>Type: {type}<br/><hr/>📏 <b>Height:</b> {height_p90} m<br/>📐 <b>Max Peak:</b> {height_max} m"
+        if gdf is not None and 'SLOPE' in gdf.columns:
+            tooltip_html += "<br/>⛰️ <b>Slope:</b> {SLOPE}°<br/>🧭 <b>Aspect:</b> {ASPECT}°"
+
     tooltip = {
         "html": tooltip_html,
         "style": {
@@ -301,7 +468,7 @@ elif view_mode == "Interactive 3D Map (PyDeck)":
         initial_view_state=view_state,
         map_style=pdk.map_styles.DARK,
         tooltip=tooltip
-    ), use_container_width=True)
+    ), use_container_width=True, height=map_height)
 
 else:
     # Plotly Scientific Analytics Mode

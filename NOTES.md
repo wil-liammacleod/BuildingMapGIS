@@ -6,6 +6,9 @@ https://www.whiteboxgeo.com/learning-resources/
 
 https://www.whiteboxgeo.com/manual/wbw-user-manual/book/installing.html
 
+https://wiki.openstreetmap.org/wiki/3D
+
+https://maplibre.org/maplibre-gl-js/docs/examples/display-buildings-in-3d/
 
 ### Features
 - **LiDAR Rooftop Cleaning:** Phase 3b implementation in `src/main.py`. Processes raw segmentation into simplified, non-overlapping 3D blocks.
