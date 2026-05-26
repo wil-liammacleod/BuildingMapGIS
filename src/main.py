@@ -6,12 +6,17 @@ import sys
 import shapely
 from shapely.ops import unary_union
 import time
+import rasterio
+from rasterio.mask import mask
+import numpy as np
+from tqdm import tqdm
 
 # Import our custom modules (now in the same directory)
 import importer
 import api_test
 import quality_metrics
 import pipeline_cache
+
 
 
 def fetch_osm_buildings(bbox: list, cache_file: Path = None, raw_osm_path: Path = None, force: bool = False) -> gpd.GeoDataFrame:
@@ -919,11 +924,12 @@ def main():
     pipeline_times = {}
     # Define the Province and City you are processing here!
     province_name = "Ontario"
-    city_name = "McMaster" 
+    city_name = "Hamilton"
+    ward_name = "Ward 1"
     
     # Bounding Box (Lat/Lon) [min_lon, min_lat, max_lon, max_lat]
-    # Default McMaster bbox (will be overridden if LiDAR file is found)
-    bbox = [-79.925, 43.255, -79.910, 43.268]
+    # Hamilton Ward 1 bbox
+    bbox = [-79.9462, 43.2417, -79.8743, 43.2940]
 
     # Parse command line flags
     force = False
@@ -933,8 +939,16 @@ def main():
     # 1. Setup Province-based Project Structure
     province_dir = Path(f"./data/{province_name}")
     footprints_dir = province_dir / "footprints"
-    city_raw_dir = province_dir / city_name / "raw"
-    city_processed_dir = province_dir / city_name / "processed"
+    
+    ward_slug = ward_name.lower().replace(" ", "_") if ward_name else ""
+    if ward_slug:
+        city_raw_dir = province_dir / city_name / ward_slug / "raw"
+        city_processed_dir = province_dir / city_name / ward_slug / "processed"
+        file_prefix = ward_slug
+    else:
+        city_raw_dir = province_dir / city_name / "raw"
+        city_processed_dir = province_dir / city_name / "processed"
+        file_prefix = city_name.lower()
     
     # Create directories early so we can check for files
     footprints_dir.mkdir(parents=True, exist_ok=True)
@@ -943,7 +957,8 @@ def main():
     
     cache_file = city_processed_dir / "pipeline_hashes.json"
 
-    print(f"🚀 Starting {city_name}, {province_name} Building Extraction Pipeline...")
+    location_str = f"{ward_name}, {city_name}" if ward_name else city_name
+    print(f"🚀 Starting {location_str}, {province_name} Building Extraction Pipeline...")
     print("-" * 50)
     
     # 0. Test the Ontario GeoHub API (Optional diagnostic)
@@ -1071,8 +1086,8 @@ def main():
         lidar_crs = detect_utm_epsg(bbox)
     
     # File Paths 
-    dsm_file = city_raw_dir / f"{city_name.lower()}_dsm.tif"
-    dtm_file = city_raw_dir / f"{city_name.lower()}_dtm.tif"
+    dsm_file = city_raw_dir / f"{file_prefix}_dsm.tif"
+    dtm_file = city_raw_dir / f"{file_prefix}_dtm.tif"
     
     # --- CHECK IF FILES EXIST BEFORE RUNNING ---
     has_data = importer.ensure_data_exists(
@@ -1082,7 +1097,8 @@ def main():
         dsm_path=dsm_file,
         dtm_path=dtm_file,
         bbox=bbox,
-        raw_dir=city_raw_dir
+        raw_dir=city_raw_dir,
+        ward_name=ward_name
     )
     
     if not has_data:
@@ -1096,9 +1112,9 @@ def main():
     # Stage 1: Raster Preprocessing
     # =========================================================================
     stage1_outputs = [
-        city_processed_dir / f"{city_name.lower()}_ndsm_output.tif",
-        city_processed_dir / f"{city_name.lower()}_smoothed_ndsm.tif",
-        city_processed_dir / f"{city_name.lower()}_roughness_output.tif"
+        city_processed_dir / f"{file_prefix}_ndsm_output.tif",
+        city_processed_dir / f"{file_prefix}_smoothed_ndsm.tif",
+        city_processed_dir / f"{file_prefix}_roughness_output.tif"
     ]
     stage1_inputs = [dsm_file, dtm_file]
     stage1_config = {
@@ -1118,7 +1134,7 @@ def main():
     if run_stage1:
         # 3. Read the Lidar Raster Data into Memory
         with StepTimer("Raster Load & nDSM", pipeline_times):
-            print(f"\nLoading DSM and DTM into memory for {city_name}...")
+            print(f"\nLoading DSM and DTM into memory for {location_str}...")
             dsm = wbe.read_raster(str(dsm_file))
             dtm = wbe.read_raster(str(dtm_file))
             
@@ -1155,10 +1171,10 @@ def main():
     # =========================================================================
     # Stage 2: Native Footprint Extraction
     # =========================================================================
-    stage2_output = city_processed_dir / f"{city_name.lower()}_lidar_buildings_3d.geojson"
+    stage2_output = city_processed_dir / f"{file_prefix}_lidar_buildings_3d.geojson"
     stage2_inputs = [
-        city_processed_dir / f"{city_name.lower()}_ndsm_output.tif",
-        city_processed_dir / f"{city_name.lower()}_roughness_output.tif"
+        city_processed_dir / f"{file_prefix}_ndsm_output.tif",
+        city_processed_dir / f"{file_prefix}_roughness_output.tif"
     ]
     stage2_config = {
         "utm_crs": lidar_crs,
@@ -1199,14 +1215,14 @@ def main():
                 terraced = np.round(ndsm_data / 3.0) * 3.0
                 terraced[~mask_arr] = 0.0
                 
-                terraced_path = city_processed_dir / f"{city_name.lower()}_terraced.tif"
+                terraced_path = city_processed_dir / f"{file_prefix}_terraced.tif"
                 with rasterio.open(terraced_path, 'w', **profile) as dst:
                     dst.write(terraced.astype(rasterio.float32), 1)
                     
                 terraced_raster = wbe.read_raster(str(terraced_path))
                 vector = wbe.raster_to_vector_polygons(terraced_raster)
                 
-                extracted_path = str(city_processed_dir / f"{city_name.lower()}_wb_extracted.shp")
+                extracted_path = str(city_processed_dir / f"{file_prefix}_wb_extracted.shp")
                 wbe.write_vector(vector, extracted_path)
                 
                 lidar_gdf = gpd.read_file(extracted_path)
@@ -1236,7 +1252,7 @@ def main():
                 
                 # Clean up temporary shapefile created by Whitebox internally
                 for ext in ['.shp', '.shx', '.dbf', '.prj']:
-                    p = city_processed_dir / f"{city_name.lower()}_wb_extracted{ext}"
+                    p = city_processed_dir / f"{file_prefix}_wb_extracted{ext}"
                     if p.exists():
                         p.unlink()
                 if terraced_path.exists():
@@ -1298,7 +1314,7 @@ def main():
     from tqdm import tqdm
     import shapely
     
-    ndsm_path = str(city_processed_dir / f"{city_name.lower()}_ndsm_output.tif")
+    ndsm_path = str(city_processed_dir / f"{file_prefix}_ndsm_output.tif")
     
     for dataset_name, buildings_gdf in datasets.items():
         step_name = f"Zonal Stats ({dataset_name.upper()})"
@@ -1310,7 +1326,7 @@ def main():
             inp_files = [city_raw_dir / "overture_footprints.geojson"]
             
         inp_files.append(Path(ndsm_path))
-        output_file = city_processed_dir / f"{city_name.lower()}_{dataset_name}_buildings_3d.geojson"
+        output_file = city_processed_dir / f"{file_prefix}_{dataset_name}_buildings_3d.geojson"
         zonal_config = {
             "bbox": bbox,
             "utm_crs": lidar_crs
@@ -1377,8 +1393,8 @@ def main():
     # =========================================================================
     # Stage 5: LiDAR Rooftop Analysis (Phase 3: High-Detail Pass)
     # =========================================================================
-    rooftops_output = city_processed_dir / f"{city_name.lower()}_lidar_rooftops_3d.geojson"
-    rooftop_footprints_shp = city_processed_dir / f"{city_name.lower()}_rooftop_footprints.shp"
+    rooftops_output = city_processed_dir / f"{file_prefix}_lidar_rooftops_3d.geojson"
+    rooftop_footprints_shp = city_processed_dir / f"{file_prefix}_rooftop_footprints.shp"
     
     if not datasets:
         print("❌ No building footprint datasets were loaded! Cannot proceed with rooftop analysis.")
@@ -1397,7 +1413,7 @@ def main():
         else:
             rooftop_inputs = [
                 lidar_file,
-                city_processed_dir / f"{city_name.lower()}_{footprint_source}_buildings_3d.geojson"
+                city_processed_dir / f"{file_prefix}_{footprint_source}_buildings_3d.geojson"
             ]
             rooftop_config = {
                 "num_iterations": 50,
@@ -1460,7 +1476,7 @@ def main():
                                     num_iterations=rooftop_config["num_iterations"]
                                 )
                                 
-                                rooftops_shp = city_processed_dir / f"{city_name.lower()}_lidar_rooftops.shp"
+                                rooftops_shp = city_processed_dir / f"{file_prefix}_lidar_rooftops.shp"
                                 wbe.write_vector(rooftops, str(rooftops_shp))
                                 
                                 # Convert results to 4326 GeoJSON for visualization
@@ -1471,7 +1487,7 @@ def main():
                                 rooftops_gdf = rooftops_gdf[rooftops_gdf.geometry.area >= 15.0].copy()
                                 
                                 # Compute actual height above ground (MAX_ELEV - DTM)
-                                dtm_path = str(city_raw_dir / f"{city_name.lower()}_dtm.tif")
+                                dtm_path = str(city_raw_dir / f"{file_prefix}_dtm.tif")
                                 with rasterio.open(dtm_path) as dtm_src:
                                     # Sample ground elevation at each segment centroid
                                     centroids = rooftops_gdf.geometry.centroid
@@ -1498,7 +1514,7 @@ def main():
                                 
                                 # Clean up temporary shapefile created by Whitebox internally
                                 for ext in ['.shp', '.shx', '.dbf', '.prj']:
-                                    p = city_processed_dir / f"{city_name.lower()}_lidar_rooftops{ext}"
+                                    p = city_processed_dir / f"{file_prefix}_lidar_rooftops{ext}"
                                     if p.exists():
                                         p.unlink()
                                         
@@ -1512,19 +1528,20 @@ def main():
                     print(f"❌ LiDAR Rooftop Analysis failed: {e}")
                     import traceback
                     traceback.print_exc()
+                    sys.exit(1)
             else:
                 print("⏭️  Skipping Stage 5: LiDAR Rooftop Analysis (results reused from cache).")
 
             # =========================================================================
             # Stage 6: Method D Cleaning & OSM Blending
             # =========================================================================
-            clean_output = city_processed_dir / f"{city_name.lower()}_lidar_rooftops_clean_3d.geojson"
-            s3db_output = city_processed_dir / f"{city_name.lower()}_lidar_rooftops_s3db_3d.geojson"
-            blended_output = city_processed_dir / f"{city_name.lower()}_lidar_rooftops_blended_3d.geojson"
+            clean_output = city_processed_dir / f"{file_prefix}_lidar_rooftops_clean_3d.geojson"
+            s3db_output = city_processed_dir / f"{file_prefix}_lidar_rooftops_s3db_3d.geojson"
+            blended_output = city_processed_dir / f"{file_prefix}_lidar_rooftops_blended_3d.geojson"
             
             stage6_inputs = [
                 rooftops_output,
-                city_processed_dir / f"{city_name.lower()}_roughness_output.tif",
+                city_processed_dir / f"{file_prefix}_roughness_output.tif",
                 rooftop_footprints_shp
             ]
             stage6_config = {
@@ -1555,7 +1572,7 @@ def main():
                         output_path=clean_output,
                         utm_crs=lidar_crs,
                         footprints_path=rooftop_footprints_shp,
-                        roughness_path=city_processed_dir / f"{city_name.lower()}_roughness_output.tif",
+                        roughness_path=city_processed_dir / f"{file_prefix}_roughness_output.tif",
                         cache_file=cache_file,
                         raw_osm_path=city_processed_dir / "osm_buildings_raw.geojson",
                         lqs_threshold=stage6_config["lqs_threshold"]

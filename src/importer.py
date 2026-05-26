@@ -104,7 +104,7 @@ def download_overture_footprints(bbox: list, output_path: Path):
         print(f"❌ Failed to download Overture data: {e}")
         return False
 
-def ensure_data_exists(province_name: str, city_name: str, footprints_dir: Path, dsm_path: Path, dtm_path: Path, bbox: list = None, raw_dir: Path = None):
+def ensure_data_exists(province_name: str, city_name: str, footprints_dir: Path, dsm_path: Path, dtm_path: Path, bbox: list = None, raw_dir: Path = None, ward_name: str = None):
     """
     Checks if province-wide footprints and city-specific TIFFs exist.
     If missing, it auto-downloads everything using APIs!
@@ -138,7 +138,8 @@ def ensure_data_exists(province_name: str, city_name: str, footprints_dir: Path,
     if missing_data:
         return False
         
-    print(f"\n✅ All required data files found for {city_name}, {province_name}!")
+    location_str = f"{ward_name}, {city_name}" if ward_name else city_name
+    print(f"\n✅ All required data files found for {location_str}, {province_name}!")
     return True
 
 def convert_copc_to_standard_laz(input_path: Path, output_path: Path) -> Path:

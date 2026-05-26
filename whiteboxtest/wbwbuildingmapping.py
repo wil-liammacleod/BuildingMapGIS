@@ -31,7 +31,21 @@ building_footprint_filename = os.path.join(output_dir, 'building_footprints.shp'
 
 # Define paths
 project_root = os.path.dirname(script_dir)
-input_laz_path = os.path.join(project_root, 'data/Ontario/McMaster/raw/ON_Niagara_20210525_NAD83CSRS_UTM17N_1km_E587_N4790_CLASS_standard.laz')
+
+# Dynamically resolve standard LAZ path for the active ward
+# Falls back to McMaster if not found
+active_ward_raw_dir = os.path.join(project_root, 'data/Ontario/Hamilton/ward_1/raw')
+standard_laz_files = []
+if os.path.exists(active_ward_raw_dir):
+    standard_laz_files = [
+        os.path.join(active_ward_raw_dir, f) for f in os.listdir(active_ward_raw_dir)
+        if f.endswith('.laz') and not f.endswith('.copc.laz')
+    ]
+
+if standard_laz_files:
+    input_laz_path = standard_laz_files[0]
+else:
+    input_laz_path = os.path.join(project_root, 'data/Ontario/McMaster/raw/ON_Niagara_20210525_NAD83CSRS_UTM17N_1km_E587_N4790_CLASS_standard.laz')
 
 wbe.working_directory = output_dir
 print(f'Reading LiDAR data from: {input_laz_path}')
